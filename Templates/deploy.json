@@ -1,0 +1,833 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+
+    "parameters": {
+
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "string"
+        },
+        "batchAccountName": {
+            "defaultValue": "batchparser",
+            "type": "string"
+        },
+        "use32BitWorkerProcess": {
+            "defaultValue": false,
+            "type": "bool"
+        },
+        "ftpsState": {
+            "defaultValue": "FtpsOnly",
+            "type": "string"
+        },
+        "netFrameworkVersion": {
+            "defaultValue": "v6.0",
+            "type": "string"
+        },
+        "sku": {
+            "defaultValue": "ElasticPremium",
+            "type": "string"
+        },
+        "skuCode": {
+            "defaultValue": "EP1",
+            "type": "string"
+        },
+        "workerSize": {
+            "defaultValue": "1",
+            "type": "string"
+        },
+        "workerSizeId": {
+            "defaultValue": "3",
+            "type": "string"
+        },
+        "numberOfWorkers": {
+            "defaultValue": "3",
+            "type": "string"
+        },
+        "roleId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+        "roleSBId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+        "roleBatchId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+        "roleStorageId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+        "roleStorageAccId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+        "roleUAId": {
+            "defaultValue": "[newGuid()]",
+            "type": "string"
+        },
+
+        "systemTopicName": {
+            "type": "string",
+            "defaultValue": "[tolower(concat('receivedfile', uniqueString( resourceGroup().id )))]",
+            "metadata": {
+                "description": "The name of the Event Grid custom topic."
+            }
+        },
+        "inputBatchContainer": {
+            "type": "string",
+            "defaultValue": "textsearchinputcontainer",
+            "metadata": {
+                "description": "Containers the converted files that Batch will use"
+            }
+        },
+        "outputBatchContainer": {
+            "type": "string",
+            "defaultValue": "textsearchoutputcontainer",
+            "metadata": {
+                "description": "The name of the container that batch will use to output the results, csv files"
+            }
+        },
+        "serviceBusQueue": {
+            "type": "string",
+            "defaultValue": "outqueue",
+            "metadata": {
+                "description": "The name of the queue that receives the blob created event"
+            }
+        },
+        "serviceBusQueueFiles": {
+            "type": "string",
+            "defaultValue": "filequeue",
+            "metadata": {
+                "description": "The name of the queue that receives the file location"
+            }
+        },
+        "serviceBusQueueLines": {
+            "type": "string",
+            "defaultValue": "linequeue",
+            "metadata": {
+                "description": "The name of the queue that receives the # of lines for specific file to split"
+            }
+        },
+        "serviceBusQueueParseFiles": {
+            "type": "string",
+            "defaultValue": "parsefilequeue",
+            "metadata": {
+                "description": "The name of the queue that parses the file"
+            }
+        },
+        "serviceBusQueueNode": {
+            "type": "string",
+            "defaultValue": "nodequeue",
+            "metadata": {
+                "description": "The name of the queue that starts creating the Node Pool in Azure Batch"
+            }
+        },
+        "serviceBusQueueBatch": {
+            "type": "string",
+            "defaultValue": "batchqueue",
+            "metadata": {
+                "description": "The name of the queue that starts the Azure Batch process"
+            }
+        },
+        "eventGridSubscriptionName": {
+            "type": "string",
+            "defaultValue": "dispatcher2",
+            "metadata": {
+                "description": "The name of the Event Grid custom topic's subscription."
+            }
+        },
+        "FileContainer": {
+            "type": "string",
+            "defaultValue": "files",
+            "metadata": {
+                "description": "Files that have been split and where Azure Batch pick up files to process"
+            }
+        },
+        "ApplicationPackageName": {
+            "type": "string",
+            "defaultValue": "mysqlparser",
+            "metadata": {
+                "description": "Name of application package for Node Pool"
+            }
+        },
+        "ApplicationPackageVersion": {
+            "type": "string",
+            "defaultValue": "v1.0",
+            "metadata": {
+                "description": "Name of application package version for Node Pool"
+            }
+        }
+    },
+    "variables": {
+        "applicationID": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/',resourceGroup().name,'/providers/Microsoft.Batch/batchAccounts/',parameters('batchAccountName') ,'/applications/',parameters('ApplicationPackageName'))]",
+        "storageAccountName": "[toLower(concat('parseapp',uniqueString(parameters('roleId'), resourceGroup().id)))]",
+        "subscriptionRGId": "[resourceGroup().id]",
+        "userAssignedIdentityName": "[toLower(concat('sqlparsermsi',uniqueString(subscription().subscriptionId, resourceGroup().id)))]",
+        "storageAccountId": "[concat(resourceGroup().id,'/providers/Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+        "dataStorageAccountName": "[toLower(concat('parsedata',uniqueString(parameters('roleStorageId'), resourceGroup().id)))]",
+        "batchStorageAccountName": "[toLower(concat('parsebatch',uniqueString(parameters('roleStorageAccId'), resourceGroup().id)))]",
+        "dataStorageAccountId": "[concat(resourceGroup().id,'/providers/Microsoft.Storage/storageAccounts/', variables('dataStorageAccountName'))]",
+        "hostingPlanName": "appreqrep",
+        "roleAssignmentId": "[parameters('roleId')]",
+        "roleAssignmentSBId": "[parameters('roleSBId')]",
+        "functionAppName": "[concat('apparser-',uniqueString(subscription().subscriptionId, resourceGroup().id))]",
+        "appInsightsName": "[concat('appInsightsparser-',uniqueString(subscription().subscriptionId, resourceGroup().id))]",
+        "keyVaultName": "[toLower(concat('kvparser',uniqueString(subscription().subscriptionId, resourceGroup().id)))]",
+        "keyVaultSecretId": "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'batchSecret')]",
+        "serviceBusNamespace": "[toLower(concat('sbparser-',uniqueString(parameters('roleSBId'), resourceGroup().id)))]",
+        "Storage Blob Data Contributor": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+        "Azure Service Bus Data Sender": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39')]",
+        "Managed Identity Operator": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'f1a07417-d97a-45cb-824c-7a7467783830')]",
+        "User Access Administration": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9')]",
+        "Contributor": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]"
+
+
+    },
+    "resources": [
+
+        {
+            "apiVersion": "2022-09-01",
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "[variables('storageAccountName')]",
+            "location": "[parameters('location')]",
+            "tags": null,
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "properties": {
+                "supportsHttpsTrafficOnly": true,
+                "minimumTlsVersion": "TLS1_2"
+            }
+        },
+        {
+            "type": "Microsoft.EventGrid/systemTopics",
+            "apiVersion": "2021-12-01",
+            "name": "[parameters('systemTopicName')]",
+            "location": "[parameters('location')]",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "source": "[resourceId('Microsoft.Storage/storageAccounts', variables('dataStorageAccountName'))]",
+                "topicType": "Microsoft.Storage.StorageAccounts",
+
+                "dependsOn": [
+                    "[resourceId('Microsoft.Storage/storageAccounts', variables('dataStorageAccountName'))]"
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dataStorageAccountName'))]"
+            ]
+        },
+        {
+            "name": "[variables('serviceBusNamespace')]",
+            "type": "Microsoft.ServiceBus/namespaces",
+            "apiVersion": "2022-01-01-preview",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Premium",
+                "tier": "Premium",
+                "capacity": 1
+            },
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {},
+            "resources": [
+                {
+                    "name": "[parameters('serviceBusQueue')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                },
+                {
+                    "name": "[parameters('serviceBusQueueLines')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                },
+                {
+                    "name": "[parameters('serviceBusQueueFiles')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                },
+                {
+                    "name": "[parameters('serviceBusQueueParseFiles')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                },
+                {
+                    "name": "[parameters('serviceBusQueueNode')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                },
+                {
+                    "name": "[parameters('serviceBusQueueBatch')]",
+                    "type": "queues",
+                    "apiVersion": "2022-01-01-preview",
+                    "dependsOn": [
+                        "[variables('serviceBusNamespace')]"
+                    ],
+                    "properties": {
+                        "DefaultMessageTimeToLive": "P14D"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.ServiceBus/namespaces/AuthorizationRules",
+            "apiVersion": "2021-06-01-preview",
+            "name": "[concat(variables('serviceBusNamespace'), '/RootManageSharedAccessKey')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('serviceBusNamespace'))]"
+            ],
+            "properties": {
+                "rights": [
+                    "Listen",
+                    "Manage",
+                    "Send"
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.ServiceBus/namespaces/queues/authorizationRules",
+            "apiVersion": "2021-06-01-preview",
+            "name": "[concat(variables('serviceBusNamespace'), '/', parameters('serviceBusQueue'),'/storage')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces/queues', variables('serviceBusNamespace'), parameters('serviceBusQueue'))]",
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('serviceBusNamespace'))]"
+            ],
+            "properties": {
+                "rights": [
+                    "Send"
+                ]
+            }
+        },
+
+        {
+            "type": "Microsoft.EventGrid/systemTopics/eventSubscriptions",
+            "apiVersion": "2021-12-01",
+            "name": "[format('{0}/{1}', parameters('systemTopicName'), parameters('eventGridSubscriptionName'))]",
+            "properties": {
+
+                "filter": {
+                    "subjectBeginsWith": "/blobServices/default/containers/data",
+                    "subjectEndsWith": ".sql",
+                    "includedEventTypes": [
+                        "Microsoft.Storage.BlobCreated",
+                        "Microsoft.Storage.BlobTierChanged",
+                        "Microsoft.Storage.AsyncOperationInitiated"
+                    ],
+                    "advancedFilters": [],
+                    "enableAdvancedFilteringOnArrays": true
+                },
+                "deliveryWithResourceIdentity": {
+                    "identity": {
+                        "type": "SystemAssigned"
+                    },
+                    "destination": {
+                        "endpointType": "ServiceBusQueue",
+                        "properties": {
+                            "resourceId": "[resourceId('Microsoft.ServiceBus/namespaces/queues', variables('serviceBusNamespace'),  parameters('serviceBusQueue'))]",
+                            "deliveryAttributeMappings": [
+                                {
+                                    "name": "url",
+                                    "type": "Dynamic",
+                                    "properties": {
+                                        "value": "",
+                                        "isSecret": false,
+                                        "sourceField": "data.url"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "labels": [],
+                    "eventDeliverySchema": "EventGridSchema"
+                },
+                "dependsOn": [
+                    "[resourceId('Microsoft.ServiceBus/namespaces/queues',variables('serviceBusNamespace'), parameters('serviceBusQueue'))]",
+                    "[resourceId('Microsoft.EventGrid/systemTopics', parameters('systemTopicName'))]"
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.ServiceBus/namespaces/queues',variables('serviceBusNamespace'), parameters('serviceBusQueue'))]",
+                "[resourceId('Microsoft.EventGrid/systemTopics', parameters('systemTopicName'))]"
+
+            ]
+        },
+        {
+            "apiVersion": "2022-03-01",
+            "name": "[variables('functionAppName')]",
+            "type": "Microsoft.Web/sites",
+            "kind": "functionapp",
+            "location": "[parameters('location')]",
+            "tags": {
+                "hidden-link: /app-insights-resource-id": "[concat(variables('subscriptionRGId'),'/providers/Microsoft.Insights/components/', variables('functionAppName'))]"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+                "[resourceId('microsoft.insights/components/', variables('appInsightsName'))]",
+                "[resourceId('Microsoft.Web/serverfarms/', variables('hostingPlanName'))]",
+
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dataStorageAccountName'))]",
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('serviceBusNamespace'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+            ],
+            "identity": {
+                "type": "SystemAssigned, UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]": {}
+
+                }
+            },
+            "properties": {
+                "name": "[variables('functionAppName')]",
+                "siteConfig": {
+                    "appSettings": [
+                        {
+                            "name": "FUNCTIONS_EXTENSION_VERSION",
+                            "value": "~4"
+                        },
+                        {
+                            "name": "FUNCTIONS_WORKER_RUNTIME",
+                            "value": "dotnet"
+                        },
+
+                        {
+                            "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                            "value": "[reference(concat('microsoft.insights/components/', variables('appInsightsName')), '2015-05-01').InstrumentationKey]"
+                        },
+                        {
+                            "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                            "value": "[reference(concat('microsoft.insights/components/', variables('appInsightsName')), '2015-05-01').ConnectionString]"
+                        },
+                        {
+                            "name": "ServiceBusConnectionAppSetting",
+                            "value": "[listKeys(resourceId(concat('Microsoft.ServiceBus/namespaces/AuthorizationRules'),variables('serviceBusNamespace'),'RootManageSharedAccessKey'),'2015-08-01').primaryConnectionString]"
+                        },
+                        {
+                            "name": "AzureWebJobsStorage",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2019-06-01').keys[0].value,';EndpointSuffix=',environment().suffixes.storage)]"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2019-06-01').keys[0].value,';EndpointSuffix=',environment().suffixes.storage)]"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTSHARE",
+                            "value": "[concat(toLower(variables('functionAppName')), '8dd1')]"
+                        },
+                        {
+                            "name": "Task_Number",
+                            "value": "4"
+                        },
+                        {
+                            "name": "Batch_Base_Url",
+                            "value": "[concat('https://', parameters('batchAccountName'), '.' , parameters('location'), '.batch.usgovcloudapi.net')]"
+                        },
+                        {
+                            "name": "Batch_Account_Name",
+                            "value": "[parameters('batchAccountName')]"
+                        },
+                        {
+                            "name": "Batch_Key",
+                            "value": "[concat('@Microsoft.KeyVault(SecretUri=', reference(variables('keyVaultSecretId'), '2015-06-01').secretUriWithVersion, ')')]"
+                        },
+                        {
+                            "name": "File_Storage_Url",
+                            "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('dataStorageAccountName'))).primaryEndpoints.blob]"
+                        },
+                        {
+                            "name": "Application_Package_Name",
+                            "value": "[parameters('ApplicationPackageName')]"
+                        },
+                        {
+                            "name": "Application_Package_Version",
+                            "value": "[parameters('ApplicationPackageVersion')]"
+                        },
+                        {
+                            "name": "Application_PackageID",
+                            "value": "[variables('applicationID')]"
+                        },
+                        {
+                            "name": "Job_File_Retention_Hours",
+                            "value": "1"
+                        },
+                        {
+                            "name": "File_Storage_Container",
+                            "value": "[parameters('FileContainer')]"
+                        },
+                        {
+                            "name": "User_Assigned_Managed_IdentityID",
+                            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+                        },
+                        {
+                            "name": "Batch_Input_Container_Url",
+                            "value": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', variables('batchStorageAccountName'))).primaryEndpoints.blob, parameters('inputBatchContainer'))]"
+                        },
+                        {
+                            "name": "Batch_Output_Container_Url",
+                            "value": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', variables('batchStorageAccountName'))).primaryEndpoints.blob, parameters('outputBatchContainer'))]"
+                        },
+                        {
+                            "name": "VM_Size",
+                            "value": "Standard_D4s_v3"
+                        },
+                        {
+                            "name": "Batch_Management_Endpoint",
+                            "value": "https://management.usgovcloudapi.net"
+                        },
+                        {
+                            "name": "SubscriptionID",
+                            "value": "[subscription().subscriptionId]"
+                        },
+                        {
+                            "name": "Resource_Group_Name",
+                            "value": "[resourceGroup().name]"
+                        },
+                        {
+                            "name": "User_Assigned_Managed_Identity_ClientID",
+                            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).clientId]"
+                        }
+                    ],
+                    "cors": {
+                        "allowedOrigins": [
+                            "https://portal.azure.us"
+                        ]
+                    },
+                    "use32BitWorkerProcess": "[parameters('use32BitWorkerProcess')]",
+                    "ftpsState": "[parameters('ftpsState')]",
+                    "netFrameworkVersion": "[parameters('netFrameworkVersion')]"
+                },
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+                "clientAffinityEnabled": false,
+                "virtualNetworkSubnetId": null,
+                "httpsOnly": true
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "name": "[variables('keyVaultName')]",
+            "apiVersion": "2018-02-14",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+            ],
+            "properties": {
+                "enabledForDeployment": true,
+                "enabledForTemplateDeployment": true,
+                "tenantId": "[subscription().tenantId]",
+                "sku": {
+                    "name": "standard",
+                    "family": "A"
+                },
+                "accessPolicies": [
+                    {
+                        "tenantId": "[subscription().tenantId]",
+                        "objectId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).principalId]"
+                        "permissions": {
+                            "keys": [
+                                "get",
+                                "list"
+                            ],
+                            "secrets": [
+                                "get",
+                                "list"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults/secrets",
+            "name": "[concat(variables('keyVaultName'), '/', 'batchSecret')]",
+            "apiVersion": "2019-09-01",
+            "dependsOn": [
+                "[concat('Microsoft.KeyVault/vaults/', variables('keyVaultName'))]",
+                "[resourceId('Microsoft.Batch/batchAccounts', parameters('batchAccountName'))]"
+            ],
+            "properties": {
+                "value": "[listKeys(resourceId('Microsoft.Batch/batchAccounts', parameters('batchAccountName')),'2022-10-01').primary]"
+            }
+        },
+        {
+            "apiVersion": "2022-03-01",
+            "name": "[variables('hostingPlanName')]",
+            "type": "Microsoft.Web/serverfarms",
+            "location": "[parameters('location')]",
+            "kind": "",
+            "tags": null,
+            "dependsOn": [],
+            "properties": {
+                "name": "[variables('hostingPlanName')]",
+                "workerSize": "[parameters('workerSize')]",
+                "workerSizeId": "[parameters('workerSizeId')]",
+                "numberOfWorkers": "[parameters('numberOfWorkers')]",
+                "maximumElasticWorkerCount": 20,
+                "zoneRedundant": false
+            },
+            "sku": {
+                "Tier": "[parameters('sku')]",
+                "Name": "[parameters('skuCode')]"
+            }
+
+
+        },
+        {
+            "name": "[variables('dataStorageAccountName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2022-09-01",
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "kind": "StorageV2",
+            "location": "[resourceGroup().location]",
+            "properties": {},
+            "resources": [
+                {
+                    "name": "default/data",
+                    "type": "blobServices/containers",
+                    "apiVersion": "2022-09-01",
+                    "dependsOn": [
+                        "[variables('dataStorageAccountName')]"
+                    ]
+                },
+                {
+                    "name": "[concat('default/', parameters('FileContainer'))]",
+                    "type": "blobServices/containers",
+                    "apiVersion": "2022-09-01",
+                    "dependsOn": [
+                        "[variables('dataStorageAccountName')]",
+                        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "[variables('batchStorageAccountName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2022-09-01",
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "kind": "StorageV2",
+            "location": "[resourceGroup().location]",
+            "properties": {},
+            "resources": [
+                {
+                    "name": "default/files",
+                    "type": "blobServices/containers",
+                    "apiVersion": "2022-09-01",
+                    "dependsOn": [
+                        "[variables('batchStorageAccountName')]",
+                        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+
+                    ]
+                },
+                {
+                    "name": "[concat('default/', parameters('inputBatchContainer'))]",
+                    "type": "blobServices/containers",
+                    "apiVersion": "2022-09-01",
+                    "dependsOn": [
+                        "[variables('batchStorageAccountName')]",
+                        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+
+                    ]
+                },
+                {
+                    "name": "[concat('default/', parameters('outputBatchContainer'))]",
+                    "type": "blobServices/containers",
+                    "apiVersion": "2022-09-01",
+                    "dependsOn": [
+                        "[variables('batchStorageAccountName')]",
+                        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.Batch/batchAccounts",
+            "apiVersion": "2022-06-01",
+            "name": "[parameters('batchAccountName')]",
+            "location": "usgovvirginia",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]": {}
+                }
+            },
+            "properties": {
+                "autoStorage": {
+                    "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('batchStorageAccountName'))]",
+                    "nodeIdentityReference": {
+                        "resourceId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+                    },
+                    "authenticationMode": "BatchAccountManagedIdentity"
+                },
+                "poolAllocationMode": "BatchService",
+                "publicNetworkAccess": "Enabled",
+                "networkProfile": {
+                    "accountAccess": {
+                        "defaultAction": "Allow"
+                    }
+                },
+                "encryption": {
+                    "keySource": "Microsoft.Batch"
+                },
+                "allowedAuthenticationModes": [
+                    "SharedKey",
+                    "AAD",
+                    "TaskAuthenticationToken"
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('batchStorageAccountName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('userAssignedIdentityName'))]"
+            ]
+        },
+        {
+            "apiVersion": "2020-02-02",
+            "name": "[variables('appInsightsName')]",
+            "type": "microsoft.insights/components",
+            "location": "[parameters('location')]",
+            "tags": null,
+            "dependsOn": [],
+            "properties": {
+                "ApplicationId": "[variables('functionAppName')]",
+                "Application_Type": "web"
+
+            }
+        },
+
+        {
+            "apiVersion": "2022-01-31-PREVIEW",
+            "name": "[variables('userAssignedIdentityName')]",
+            "location": "[parameters('location')]",
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "properties": {}
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleStorageAccId')]",
+            "scope": "[concat('Microsoft.Storage/storageAccounts', '/', variables('dataStorageAccountName'))]",
+            "dependsOn": [
+                "[variables('dataStorageAccountName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables('Storage Blob Data Contributor')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).principalId]"
+
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleStorageId')]",
+            "scope": "[concat('Microsoft.Storage/storageAccounts', '/', variables('batchStorageAccountName'))]",
+            "dependsOn": [
+                "[variables('batchStorageAccountName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables('Storage Blob Data Contributor')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).principalId]"
+
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleId')]",
+
+            "dependsOn": [
+                "[parameters('batchAccountName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables('Managed Identity Operator')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).principalId]"
+
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleSBId')]",
+
+            "properties": {
+                "roleDefinitionId": "[variables('Azure Service Bus Data Sender')]",
+                "principalId": "[reference(resourceId('Microsoft.EventGrid/systemTopics', parameters('systemTopicName')),'2022-06-15','Full' ).identity.principalId]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleUAId')]",
+
+            "properties": {
+                "roleDefinitionId": "[variables('User Access Administration')]",
+                "principalId": "[reference(resourceId('Microsoft.EventGrid/systemTopics', parameters('systemTopicName')),'2022-06-15','Full' ).identity.principalId]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[parameters('roleBatchId')]",
+            "scope": "[concat('Microsoft.Batch/batchAccounts/', parameters('batchAccountName'))]",
+            "dependsOn": [
+                "[parameters('batchAccountName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables('Contributor')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('userAssignedIdentityName'))).principalId]"
+
+            }
+        }
+    ],
+    "outputs": {
+        "functionAppName": {
+            "type": "string",
+            "value": "[variables('functionAppName')]"
+        },
+        "managedIdentityAppName": {
+            "type": "string",
+            "value": "[variables('userAssignedIdentityName')]"
+        }
+    }
+}
