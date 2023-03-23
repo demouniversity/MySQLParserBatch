@@ -73,13 +73,13 @@ The current Node Pool configurations is for 2022-datacenter for a specific .NET 
 
 ## Installation
 
-Start with the [Deploy script](https://github.com/demouniversity/ConvertMySQLFiles/blob/main/Scripts/Deploy.ps1). 
+Start with the [Deploy script](https://github.com/demouniversity/MySQLParserBatch/blob/main/Scripts/Deploy.ps1). 
 - Execute the code to deploying the ARM template 
 ```
 az deployment group create -g "$rg" -f .\Templates\deploy.json
 ```
 - After the deployment is completed then upload the package. 
-    - Obtain the package from the [MySQLParser repo](https://github.com/demouniversity/MySQLparser) or use the zip file directly [here.](https://github.com/demouniversity/MySQLparser/blob/main/mysqlparser/mysqlparser.zip). The repo build will copy all the needed files in the mysqlparser directory in the solution, which can be zipped. Make sure all files are at the root of the zip file. e.g. mysqlparser -> *.dll
+    - Obtain the package from the [MySQLParser repo](https://github.com/demouniversity/TextSearchBatch) or use the zip file directly [here.](https://github.com/demouniversity/TextSearchBatch/blob/main/mysqlparser/mysqlparser.zip). The repo build will copy all the needed files in the mysqlparser directory in the solution, which can be zipped. Make sure all files are at the root of the zip file. e.g. mysqlparser -> *.dll
 
 ```
 az batch application package create
